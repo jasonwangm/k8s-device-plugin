@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	resourceName           = "nvidia.com/gpu"
-	serverSock             = pluginapi.DevicePluginPath + "nvidia.sock"
+	resourceName           = "nvidia.com/gpu_shared"
+	serverSock             = pluginapi.DevicePluginPath + "nvidia_shared.sock"
+	envGPUShareDegree      = "NVIDIA_GPU_SHARE_DEGREE"
 	envDisableHealthChecks = "DP_DISABLE_HEALTHCHECKS"
 	allHealthChecks        = "xids"
 )
@@ -154,16 +155,18 @@ func (m *NvidiaDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Alloc
 	devs := m.devs
 	responses := pluginapi.AllocateResponse{}
 	for _, req := range reqs.ContainerRequests {
-		response := pluginapi.ContainerAllocateResponse{
-			Envs: map[string]string{
-				"NVIDIA_VISIBLE_DEVICES": strings.Join(req.DevicesIDs, ","),
-			},
-		}
-
+		uuids := make([]string, 0)
 		for _, id := range req.DevicesIDs {
 			if !deviceExists(devs, id) {
 				return nil, fmt.Errorf("invalid allocation request: unknown device: %s", id)
 			}
+			uuids = append(uuids, getRealDeviceID(id))
+		}
+
+		response := pluginapi.ContainerAllocateResponse{
+			Envs: map[string]string{
+				"NVIDIA_VISIBLE_DEVICES": strings.Join(uuids, ","),
+			},
 		}
 
 		responses.ContainerResponses = append(responses.ContainerResponses, &response)

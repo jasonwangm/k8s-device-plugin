@@ -4,6 +4,8 @@ package main
 
 import (
 	"log"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/NVIDIA/nvidia-docker/src/nvml"
@@ -22,17 +24,36 @@ func getDevices() []*pluginapi.Device {
 	n, err := nvml.GetDeviceCount()
 	check(err)
 
+	gpuShareNum, err := strconv.Atoi(os.Getenv(envGPUShareDegree))
+	if err != nil {
+		// if no env is setting, set gpu share degree to 5 (hard coding!)
+		gpuShareNum = 5
+	}
+
 	var devs []*pluginapi.Device
 	for i := uint(0); i < n; i++ {
 		d, err := nvml.NewDeviceLite(i)
 		check(err)
-		devs = append(devs, &pluginapi.Device{
-			ID:     d.UUID,
-			Health: pluginapi.Healthy,
-		})
+		for j := 1; j <= gpuShareNum; j++ {
+			devs = append(devs, &pluginapi.Device{
+				ID:     getSharedDeviceID(d.UUID, j),
+				Health: pluginapi.Healthy,
+			})
+		}
 	}
 
 	return devs
+}
+
+// getRealDeviceID separates from id the real device uuid
+func getRealDeviceID(id string) string {
+	return id[0:strings.LastIndex(id, "-")]
+}
+
+// getSharedDeviceId concatenates the real device uuid with the
+// shareId, e.g., uuid="GPU-fef8089b-4820-abfc-e83e-94318197576e"
+func getSharedDeviceID(uuid string, shareId int) string {
+	return fmt.Sprintf("%s-%03d", uuid, shareId)
 }
 
 func deviceExists(devs []*pluginapi.Device, id string) bool {
@@ -49,7 +70,7 @@ func watchXIDs(ctx context.Context, devs []*pluginapi.Device, xids chan<- *plugi
 	defer nvml.DeleteEventSet(eventSet)
 
 	for _, d := range devs {
-		err := nvml.RegisterEventForDevice(eventSet, nvml.XidCriticalError, d.ID)
+		err := nvml.RegisterEventForDevice(eventSet, nvml.XidCriticalError, getRealDeviceID(d.ID))
 		if err != nil && strings.HasSuffix(err.Error(), "Not Supported") {
 			log.Printf("Warning: %s is too old to support healthchecking: %s. Marking it unhealthy.", d.ID, err)
 
@@ -90,7 +111,7 @@ func watchXIDs(ctx context.Context, devs []*pluginapi.Device, xids chan<- *plugi
 		}
 
 		for _, d := range devs {
-			if d.ID == *e.UUID {
+			if getRealDeviceID(d.ID) == *e.UUID {
 				xids <- d
 			}
 		}
